@@ -1,0 +1,41 @@
+{
+  "name": "@27colab/voice-engine",
+  "version": "0.1.0",
+  "description": "Small, tested reference for real-time phone-agent turn-taking: Twilio mark-confirmed playback, barge-in history rewrite, speculative turns.",
+  "license": "MIT",
+  "type": "module",
+  "private": false,
+  "engines": { "node": ">=20" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./providers": { "types": "./dist/providers/index.d.ts", "import": "./dist/providers/index.js" },
+    "./testing": { "types": "./dist/testing/index.d.ts", "import": "./dist/testing/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "example": "tsx examples/loopback.ts",
+    "prepack": "npm run build"
+  },
+  "peerDependencies": {
+    "@anthropic-ai/sdk": ">=0.40.0",
+    "ws": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/sdk": { "optional": true },
+    "ws": { "optional": true }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "ws": "^8.18.0"
+  }
+}
