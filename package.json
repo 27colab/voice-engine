@@ -1,23 +1,46 @@
 {
   "name": "@27colab/voice-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Small, tested reference for real-time phone-agent turn-taking: Twilio mark-confirmed playback, barge-in history rewrite, speculative turns.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/27colab/voice-engine.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/27colab/voice-engine.git"
+  },
   "homepage": "https://docs.27colab.com",
-  "bugs": { "url": "https://github.com/27colab/voice-engine/issues" },
-  "publishConfig": { "access": "public" },
+  "bugs": {
+    "url": "https://github.com/27colab/voice-engine/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "private": false,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./providers": { "types": "./dist/providers/index.d.ts", "import": "./dist/providers/index.js" },
-    "./testing": { "types": "./dist/testing/index.d.ts", "import": "./dist/testing/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    }
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
@@ -30,8 +53,12 @@
     "ws": "^8.0.0"
   },
   "peerDependenciesMeta": {
-    "@anthropic-ai/sdk": { "optional": true },
-    "ws": { "optional": true }
+    "@anthropic-ai/sdk": {
+      "optional": true
+    },
+    "ws": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

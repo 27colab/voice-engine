@@ -11,7 +11,9 @@ Turn-taking for real-time phone agents: know what the caller actually heard when
 
 - **Sent is not heard.** Only Twilio `mark` echoes count as played, so a barge-in cuts the assistant turn at what the caller actually heard (`"…Monday morning, [interrupted]"`).
 - **Backchannels don't interrupt.** "uh-huh" and "sí claro" are ignored; a real utterance stops the agent. The classifier is pluggable.
-- **Testable offline.** Fake transport, STT, TTS (with real character alignment) and scripted chat; the 80 tests run with no keys and no network.
+- **No dead air while tools run.** A filler ("one moment") plays the instant the model starts a tool call, through the same interruptible playback path, and never lands in the model's history.
+- **Cheaper turns.** The Anthropic adapter caches the system prompt and the conversation so far, and every call ends with token, cache and TTS-character totals.
+- **Testable offline.** Fake transport, STT, TTS (with real character alignment) and scripted chat; the 92 tests run with no keys and no network.
 
 ## Install
 
@@ -72,12 +74,14 @@ The engine itself needs none. The optional adapters call third-party services wi
 
 | Export | Purpose |
 |---|---|
-| `createCallSession(deps, info, hooks, config)` | The session: greeting → listening → thinking → speaking, barge-in, speculative turns. `hooks.onEnd` receives a `CallRecord` (transcript, stats, events). |
+| `createCallSession(deps, info, hooks, config)` | The session: greeting → listening → thinking → speaking, barge-in, speculative turns, tool fillers. `hooks.onEnd` receives a `CallRecord` (transcript, stats with `usage` totals, events); `hooks.onWarning` flags configs that fail silently. |
+| `config.system` | A string, or `SystemBlock[]` whose `cacheBoundary` marks the cacheable prefix, or a function of `(lang, now)` returning either. |
+| `config.fillers` | `{ [toolName]: "One moment." }` or per language `{ en, es }`. |
 | `TwilioMediaTransport` | Twilio Media Streams over a structural socket type (no `ws` import in core). |
 | `splitAtPlayedMs`, `computeSpokenText` | Map "N ms confirmed played" to the text the caller heard, using per-character TTS timings. |
 | `rewriteOnBargeIn` | Rewrite chat history to the heard prefix plus `[interrupted]`. |
 | `classifyUtterance`, `detectLang` | Backchannel vs interruption; small EN/ES heuristics. |
-| `/providers` | `createDeepgramFluxFactory`, `createElevenLabsFactory`, `createAnthropicChat` (optional peer deps). |
+| `/providers` | `createDeepgramFluxFactory`, `createElevenLabsFactory`, `createAnthropicChat(key, { cacheSystem, cacheHistory })` (both on by default), `buildAnthropicRequest` (optional peer deps). |
 | `/testing` | `FakeTransport`, `FakeStt`, `FakeTts`, `FakeChat`. |
 
 Full reference: **[docs.27colab.com/packages/voice-engine](https://docs.27colab.com/packages/voice-engine/)**
@@ -88,7 +92,8 @@ Full reference: **[docs.27colab.com/packages/voice-engine](https://docs.27colab.
 - ElevenLabs alignment handling is unverified against the live API; check it on your account.
 - Single process, in-memory. The backchannel list and language detection are small heuristics.
 - No latency or quality numbers: nothing here has been benchmarked, and the fakes answer instantly.
-- Pre-1.0: pin the exact version; 0.x minors can change APIs.
+- Prompt caching only applies above each model's minimum prefix (512 to 4,096 tokens depending on the model). Below it nothing is cached and `usage.llmCacheReadTokens` stays 0; history caching usually crosses it from the second turn.
+- Pre-1.0: pin the exact version; 0.x minors can change APIs (see [CHANGELOG.md](CHANGELOG.md)).
 
 ## Not for you if…
 
