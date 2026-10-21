@@ -468,7 +468,7 @@ describe('bilingual voice selection', () => {
   });
 
   it('follow-caller switches voice and system prompt language per turn', async () => {
-    const systems: string[] = [];
+    const systems: unknown[] = [];
     const h = harness({
       transport: { autoConfirmMarks: true },
       config: {

@@ -20,7 +20,7 @@ import {
   type ClassifyOptions,
   type UtteranceKind,
 } from './turn-policy.js';
-import type { ChatMessage, Lang, ToolDef } from './types.js';
+import type { ChatMessage, Filler, Lang, SystemPrompt, ToolDef } from './types.js';
 import { selectVoice, type VoiceSettings } from './voice.js';
 
 export interface CallSessionConfig {
@@ -29,10 +29,23 @@ export interface CallSessionConfig {
   /** 'follow-caller' re-detects EN/ES from each caller turn (heuristic). Default 'fixed'. */
   languagePolicy?: 'fixed' | 'follow-caller';
   greeting: string | Partial<Record<Lang, string>>;
-  system: string | ((lang: Lang, now: Date) => string);
+  /**
+   * The system prompt: a string, ordered blocks with cache boundaries, or a
+   * function of the current language and time returning either. Called per
+   * model turn, so volatile facts (the time) can go after the last boundary.
+   */
+  system: SystemPrompt | ((lang: Lang, now: Date) => SystemPrompt);
   llm: { model: string; maxTokens: number };
   tools?: ToolDef[];
   executeTool?: ToolExecutor;
+  /**
+   * Phrases spoken the instant the model starts a tool call ("One moment."),
+   * keyed by tool name, per language or one string for all. Spoken through
+   * the normal playback path: the caller can interrupt it, it is on the
+   * timeline and in the transcript, and it is never added to chat history.
+   * Skipped when the model already wrote its own preamble that turn.
+   */
+  fillers?: Record<string, Filler>;
   voice: VoiceSettings;
   stt: {
     model: string;
@@ -65,6 +78,8 @@ interface Utterance {
   tts: TtsStream | null;
   /** Is this text already the last assistant message in history? */
   inHistory: boolean;
+  /** A tool filler: never rewritten into history on barge-in. */
+  filler: boolean;
 }
 
 interface Speculation {
@@ -98,6 +113,8 @@ class CallSession implements CallSessionApi {
   private chatAbort: AbortController | null = null;
   private speculation: Speculation | null = null;
   private maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The filler currently playing (or synthesizing), if any. */
+  private pendingFiller: Promise<void> | null = null;
 
   constructor(
     private readonly deps: CallSessionDeps,
@@ -120,6 +137,8 @@ class CallSession implements CallSessionApi {
     });
     transport.onMark((name) => this.utterance?.tracker.onMark(name));
     transport.onStop(() => void this.end('caller_hangup'));
+
+    this.checkConfig();
 
     const limitMs = (this.cfg.maxCallSeconds ?? 900) * 1000;
     this.maxDurationTimer = setTimeout(() => void this.end('max_duration'), limitMs);
@@ -176,6 +195,22 @@ class CallSession implements CallSessionApi {
     } catch {
       /* host hook errors must not crash teardown */
     }
+  }
+
+  /** Warn about configurations that fail silently. */
+  private checkConfig(): void {
+    const model = this.cfg.stt.model;
+    if (this.cfg.languages.length > 1 && model.startsWith('flux-') && !model.endsWith('-multi')) {
+      this.warn(
+        `stt.model "${model}" transcribes one language, but languages is [${this.cfg.languages.join(', ')}]. ` +
+          'Use "flux-general-multi" so callers in the other language are understood.',
+      );
+    }
+  }
+
+  private warn(message: string): void {
+    this.timeline.mark('warning', { message });
+    this.hooks.onWarning?.(message);
   }
 
   // -- STT wiring --------------------------------------------------------------
@@ -302,7 +337,7 @@ class CallSession implements CallSessionApi {
     this.timeline.bargeIn(transcript);
 
     const u = this.utterance;
-    if (u) {
+    if (u && !u.filler) {
       const heard = this.heardText(u);
       rewriteOnBargeIn(this.history, heard, { inHistory: u.inHistory });
     }
@@ -313,6 +348,7 @@ class CallSession implements CallSessionApi {
     this.chatAbort = null;
     this.speculation = null;
     this.pendingEndCall = false;
+    this.pendingFiller = null;
     this.dropUtterance({ clearTransport: true });
     this.state = 'listening';
   }
@@ -376,6 +412,8 @@ class CallSession implements CallSessionApi {
       const abort = new AbortController();
       this.chatAbort = abort;
       let firstToken = false;
+      let sawText = false;
+      let fillerStarted = false;
 
       const result = await chat.streamTurn({
         model: this.cfg.llm.model,
@@ -385,16 +423,30 @@ class CallSession implements CallSessionApi {
         tools: this.cfg.tools ?? [],
         messages: this.history,
         signal: abort.signal,
-        onTextDelta: () => {
-          if (stale() || firstToken) return;
+        onTextDelta: (delta) => {
+          if (stale()) return;
+          if (delta.trim()) sawText = true;
+          if (firstToken) return;
           firstToken = true;
           this.timeline.firstToken();
         },
         onToolUseStart: (name) => {
-          if (!stale()) this.timeline.mark('tool_use', { toolName: name });
+          if (stale()) return;
+          this.timeline.mark('tool_use', { toolName: name });
+          // One filler per model turn, only when the model wrote no preamble of its own.
+          if (!fillerStarted && !sawText) {
+            fillerStarted = true;
+            this.startFiller(gen, name);
+          }
         },
       });
       if (this.chatAbort === abort) this.chatAbort = null;
+      this.timeline.addUsage({
+        llmInputTokens: result.usage.inputTokens,
+        llmOutputTokens: result.usage.outputTokens,
+        llmCacheReadTokens: result.usage.cacheReadTokens,
+        llmCacheWriteTokens: result.usage.cacheWriteTokens,
+      });
       if (stale()) return;
 
       if (result.toolCalls.length > 0) {
@@ -403,6 +455,7 @@ class CallSession implements CallSessionApi {
         // barge-in here can't leave a tool_use without a tool_result.
         const preamble = result.text.trim();
         if (preamble) {
+          await this.finishFiller();
           await this.speak(preamble, { gen, transitionTo: null, addToHistory: false });
           if (stale()) return;
         }
@@ -436,6 +489,8 @@ class CallSession implements CallSessionApi {
       }
 
       const text = result.text.trim();
+      await this.finishFiller();
+      if (stale()) return;
       if (!text) {
         if (this.pendingEndCall) await this.gracefulEnd(gen);
         else this.state = 'listening';
@@ -457,6 +512,37 @@ class CallSession implements CallSessionApi {
     await this.end('agent_end_call');
   }
 
+  // -- fillers ---------------------------------------------------------------------
+
+  private fillerText(toolName: string): string | null {
+    const f = this.cfg.fillers?.[toolName];
+    if (!f) return null;
+    if (typeof f === 'string') return f.trim() || null;
+    return (f[this.lang] ?? f.en ?? Object.values(f)[0] ?? '').trim() || null;
+  }
+
+  /** Speak the tool's filler now; the tool runs while it plays. */
+  private startFiller(gen: number, toolName: string): void {
+    if (this.pendingFiller) return; // one is still playing; never overlap two
+    const text = this.fillerText(toolName);
+    if (!text) return;
+    this.timeline.mark('filler', { toolName, text });
+    // Back to 'thinking' afterwards: caller speech while the tool runs is not an interruption.
+    const p: Promise<void> = this.speak(text, { gen, transitionTo: 'thinking', addToHistory: false, filler: true })
+      .catch((err) => this.hooks.onError?.(err))
+      .finally(() => {
+        if (this.pendingFiller === p) this.pendingFiller = null;
+      });
+    this.pendingFiller = p;
+  }
+
+  /** Let a filler finish playing before the next utterance starts. */
+  private async finishFiller(): Promise<void> {
+    const p = this.pendingFiller;
+    this.pendingFiller = null;
+    if (p) await p;
+  }
+
   // -- speak + mark-confirmed playback ----------------------------------------------
 
   private greetingText(): string {
@@ -467,7 +553,7 @@ class CallSession implements CallSessionApi {
 
   private async speak(
     text: string,
-    opts: { gen: number; transitionTo: State | null; addToHistory: boolean },
+    opts: { gen: number; transitionTo: State | null; addToHistory: boolean; filler?: boolean },
   ): Promise<void> {
     const { gen } = opts;
     const stale = () => gen !== this.gen || this.ended;
@@ -481,7 +567,7 @@ class CallSession implements CallSessionApi {
       transport: this.deps.transport,
       prefix: `u${++this.utteranceSeq}-`,
     });
-    const utterance: Utterance = { text, tracker, tts: null, inHistory: opts.addToHistory };
+    const utterance: Utterance = { text, tracker, tts: null, inHistory: opts.addToHistory, filler: opts.filler ?? false };
     this.utterance = utterance;
 
     let firstAudio = false;
@@ -515,6 +601,7 @@ class CallSession implements CallSessionApi {
     utterance.tts = tts;
     tts.speak(text);
     tts.end();
+    this.timeline.addUsage({ ttsCharacters: text.length });
 
     // Wait for all audio to be handed to the transport, so the last mark rides
     // behind it; then wait for the marks to come back.

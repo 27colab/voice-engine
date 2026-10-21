@@ -1,4 +1,4 @@
-import type { Lang, TranscriptEntry } from './types.js';
+import type { CallUsage, Lang, TranscriptEntry } from './types.js';
 
 /**
  * Event timeline + per-turn latency stats for one call. No I/O; the clock is
@@ -16,11 +16,13 @@ export type TimelineEventName =
   | 'speculative_cancel'
   | 'llm_first_token'
   | 'tool_use'
+  | 'filler'
   | 'tts_first_audio'
   | 'barge_in'
   | 'backchannel'
   | 'playback_confirmed'
   | 'error'
+  | 'warning'
   | 'call_end';
 
 export interface TimelineEvent {
@@ -56,6 +58,8 @@ export interface CallStats {
   speculativeStarts: number;
   speculativeCancels: number;
   toolCalls: number;
+  /** Filler phrases spoken while tools ran. */
+  fillers: number;
   playbackConfirmed: number;
   playbackTimeouts: number;
   /** Turn start -> first LLM token, ms. */
@@ -64,6 +68,8 @@ export interface CallStats {
   ttfa: Distribution;
   /** Final end-of-turn -> first TTS audio, ms (<= ttfa when speculation helped). Floored at 0. */
   eotToAudio: Distribution;
+  /** Token and character totals for the call. */
+  usage: CallUsage;
 }
 
 export interface CallRecord {
@@ -105,6 +111,13 @@ export class CallTimeline {
   private readonly turns = new Map<number, TurnTiming>();
   private gen = 0;
   private readonly now: () => number;
+  private readonly usageTotals: CallUsage = {
+    llmInputTokens: 0,
+    llmOutputTokens: 0,
+    llmCacheReadTokens: 0,
+    llmCacheWriteTokens: 0,
+    ttsCharacters: 0,
+  };
 
   constructor(opts: { now?: () => number } = {}) {
     this.now = opts.now ?? Date.now;
@@ -162,6 +175,13 @@ export class CallTimeline {
     this.mark('barge_in', { text });
   }
 
+  /** Add to the call's usage totals. Non-finite or negative values are ignored. */
+  addUsage(delta: Partial<CallUsage>): void {
+    for (const [k, v] of Object.entries(delta) as Array<[keyof CallUsage, number | undefined]>) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) this.usageTotals[k] += v;
+    }
+  }
+
   agentSaid(text: string): void {
     if (text.trim()) this.transcript.push({ role: 'agent', text, ts: this.now() });
   }
@@ -195,11 +215,13 @@ export class CallTimeline {
       speculativeStarts: this.count('speculative_start'),
       speculativeCancels: this.count('speculative_cancel'),
       toolCalls: this.count('tool_use'),
+      fillers: this.count('filler'),
       playbackConfirmed: this.count('playback_confirmed', (e) => e.data?.viaTimeout === false),
       playbackTimeouts: this.count('playback_confirmed', (e) => e.data?.viaTimeout === true),
       ttft: distribution(ttft),
       ttfa: distribution(ttfa),
       eotToAudio: distribution(eotToAudio),
+      usage: { ...this.usageTotals },
     };
   }
 

@@ -1,6 +1,6 @@
 import type { CharAlignment } from './alignment.js';
 import type { CallRecord } from './timeline.js';
-import type { ChatMessage, Lang, ToolDef, ToolResult } from './types.js';
+import type { ChatMessage, Lang, SystemPrompt, ToolDef, ToolResult } from './types.js';
 
 /**
  * Provider interfaces. Every external dependency (Twilio socket, STT, TTS, LLM)
@@ -114,12 +114,17 @@ export interface TtsFactory {
 export interface ChatUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Prompt tokens read from the provider's cache, if the provider reports it. */
+  cacheReadTokens?: number;
+  /** Prompt tokens written to the provider's cache, if the provider reports it. */
+  cacheWriteTokens?: number;
 }
 
 export interface ChatTurnRequest {
   model: string;
   maxTokens: number;
-  system: string;
+  /** A string, or ordered blocks whose `cacheBoundary` marks a cacheable prefix. */
+  system: SystemPrompt;
   messages: ChatMessage[];
   tools: ToolDef[];
   signal?: AbortSignal;
@@ -166,6 +171,8 @@ export interface CallSessionHooks {
   onEnd(record: CallRecord, reason: CallEndReason): void;
   /** Non-fatal chat/tool errors (the call keeps listening). */
   onError?(err: unknown): void;
+  /** Configuration that will probably misbehave (e.g. an English-only STT model on a bilingual line). */
+  onWarning?(message: string): void;
 }
 
 export interface CallSessionApi {
