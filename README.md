@@ -82,7 +82,7 @@ The engine itself needs none. The optional adapters call third-party services wi
 | `splitAtPlayedMs`, `computeSpokenText` | Map "N ms confirmed played" to the text the caller heard, using per-character TTS timings. |
 | `rewriteOnBargeIn` | Rewrite chat history to the heard prefix plus `[interrupted]`. |
 | `classifyUtterance`, `detectLang` | Backchannel vs interruption; small EN/ES heuristics. |
-| `/providers` | `createDeepgramFluxFactory(key, { url })` (supports mid-call `configure`), `createElevenLabsFactory`, `createAnthropicChat(key, { cacheSystem, cacheHistory })` (both on by default), `buildAnthropicRequest` (optional peer deps). |
+| `/providers` | `createDeepgramFluxFactory(key, { url })` (supports mid-call `configure`), `createElevenLabsFactory`, `createAnthropicChat(key, { cacheSystem, cacheHistory, timeoutMs, maxRetries })` (caching on by default; set `timeoutMs` ~15000 and `maxRetries` 0–1 for live calls), `buildAnthropicRequest` (optional peer deps). |
 | `/testing` | `FakeTransport`, `FakeStt`, `FakeTts`, `FakeChat`. |
 
 Full reference: **[docs.27colab.com/packages/voice-engine](https://docs.27colab.com/packages/voice-engine/)**
