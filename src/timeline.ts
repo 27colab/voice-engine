@@ -8,6 +8,7 @@ import type { CallUsage, Lang, TranscriptEntry } from './types.js';
 export type TimelineEventName =
   | 'call_start'
   | 'stt_start'
+  | 'stt_configure'
   | 'transcript'
   | 'eager_eot'
   | 'turn_resumed'

@@ -13,7 +13,7 @@ Turn-taking for real-time phone agents: know what the caller actually heard when
 - **Backchannels don't interrupt.** "uh-huh" and "sí claro" are ignored; a real utterance stops the agent. The classifier is pluggable.
 - **No dead air while tools run.** A filler ("one moment") plays the instant the model starts a tool call, through the same interruptible playback path, and never lands in the model's history.
 - **Cheaper turns.** The Anthropic adapter caches the system prompt and the conversation so far, and every call ends with token, cache and TTS-character totals.
-- **Testable offline.** Fake transport, STT, TTS (with real character alignment) and scripted chat; the 92 tests run with no keys and no network.
+- **Testable offline.** Fake transport, STT, TTS (with real character alignment) and scripted chat; the 101 tests run with no keys and no network.
 
 ## Install
 
@@ -77,11 +77,12 @@ The engine itself needs none. The optional adapters call third-party services wi
 | `createCallSession(deps, info, hooks, config)` | The session: greeting → listening → thinking → speaking, barge-in, speculative turns, tool fillers. `hooks.onEnd` receives a `CallRecord` (transcript, stats with `usage` totals, events); `hooks.onWarning` flags configs that fail silently. |
 | `config.system` | A string, or `SystemBlock[]` whose `cacheBoundary` marks the cacheable prefix, or a function of `(lang, now)` returning either. |
 | `config.fillers` | `{ [toolName]: "One moment." }` or per language `{ en, es }`. |
+| `session.configureStt(update)` | Mid-call STT changes without reconnecting: `languageHint`, `numerals`, `keyterms`. With `follow-caller`, the language hint follows the caller automatically (`stt.followLanguage: false` to opt out). |
 | `TwilioMediaTransport` | Twilio Media Streams over a structural socket type (no `ws` import in core). |
 | `splitAtPlayedMs`, `computeSpokenText` | Map "N ms confirmed played" to the text the caller heard, using per-character TTS timings. |
 | `rewriteOnBargeIn` | Rewrite chat history to the heard prefix plus `[interrupted]`. |
 | `classifyUtterance`, `detectLang` | Backchannel vs interruption; small EN/ES heuristics. |
-| `/providers` | `createDeepgramFluxFactory`, `createElevenLabsFactory`, `createAnthropicChat(key, { cacheSystem, cacheHistory })` (both on by default), `buildAnthropicRequest` (optional peer deps). |
+| `/providers` | `createDeepgramFluxFactory(key, { url })` (supports mid-call `configure`), `createElevenLabsFactory`, `createAnthropicChat(key, { cacheSystem, cacheHistory })` (both on by default), `buildAnthropicRequest` (optional peer deps). |
 | `/testing` | `FakeTransport`, `FakeStt`, `FakeTts`, `FakeChat`. |
 
 Full reference: **[docs.27colab.com/packages/voice-engine](https://docs.27colab.com/packages/voice-engine/)**

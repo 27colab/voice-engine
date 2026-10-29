@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (proposed 0.3.0, minor)
+
+Uses Deepgram Flux's mid-stream `Configure` message (documented on developers.deepgram.com, numerals mid-stream since 2026-09-25).
+
+### Added
+- **The STT language hint follows the caller.** With `languagePolicy: 'follow-caller'`, a switch between English and Spanish now also updates Flux's `language_hints`, so the next caller turn is transcribed with the right hint. Before, the hint stayed on the starting language for the whole call. Opt out with `stt.followLanguage: false`.
+- **`session.configureStt(update)`** changes STT settings mid-call without reconnecting: `languageHint`, `numerals`, `keyterms` (replaces the list). Typical use: `{ numerals: true }` while asking for a phone number or date. Updates requested before STT opens are merged and sent once it does. A `stt_configure` timeline event records each update.
+- **`stt.numerals`** sets digit formatting when the stream opens.
+- **Flux adapter:** `SttStream.configure`, `createDeepgramFluxFactory(key, { url })`, and exported `fluxListenParams` / `buildFluxConfigure`. A `ConfigureFailure` reply (Flux keeps its previous settings) is reported through the new `SttEventHandlers.onWarning` and the session's `onWarning` hook; it no longer risks being treated as a fatal error.
+- **Fakes:** `FakeSttStream.configure` records updates in `configures`; `emitWarning`.
+
+### Changed (type-level)
+- `CallSessionApi` gains `configureStt`. `SttStream.configure` and `SttEventHandlers.onWarning` are optional, so custom STT providers keep compiling.
+
 ## 0.2.0 (2026-10-21)
 
 Moved in from the first production host (a multi-tenant receptionist), where each piece had to be rebuilt outside the engine.

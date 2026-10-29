@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import type { SttConfig, SttEventHandlers, SttFactory, SttStream } from '../interfaces.js';
+import type { SttConfig, SttEventHandlers, SttFactory, SttStream, SttUpdate } from '../interfaces.js';
 import type { Lang } from '../types.js';
 
 const FLUX_URL = 'wss://api.deepgram.com/v2/listen';
@@ -8,6 +8,44 @@ const DEFAULT_MODEL = 'flux-general-en';
 type FluxTurnEvent = 'Update' | 'StartOfTurn' | 'EagerEndOfTurn' | 'TurnResumed' | 'EndOfTurn';
 
 const LANGUAGE_HINTS: Record<Lang, string> = { en: 'en', es: 'es' };
+
+/** Deepgram caps keyterms at 100 per list. */
+const MAX_KEYTERMS = 100;
+
+export interface DeepgramFluxOptions {
+  /** Override the endpoint (tests, regional endpoints). Default `wss://api.deepgram.com/v2/listen`. */
+  url?: string;
+}
+
+/** Query string for opening a Flux stream. Exported for tests. */
+export function fluxListenParams(config: SttConfig): URLSearchParams {
+  const model = config.model || DEFAULT_MODEL;
+  const params = new URLSearchParams({ model, encoding: 'mulaw', sample_rate: '8000' });
+  if (config.eotThreshold != null) params.set('eot_threshold', String(config.eotThreshold));
+  if (config.eagerEotThreshold != null) params.set('eager_eot_threshold', String(config.eagerEotThreshold));
+  if (config.numerals != null) params.set('numerals', String(config.numerals));
+  for (const k of config.keyterms.slice(0, MAX_KEYTERMS)) params.append('keyterm', k);
+  // language_hint only applies to the multilingual model.
+  if (model.endsWith('-multi') && config.languageHint) {
+    params.set('language_hint', LANGUAGE_HINTS[config.languageHint]);
+  }
+  return params;
+}
+
+/**
+ * The Flux `Configure` message for a mid-call update, or null when there is
+ * nothing to send (e.g. only a language hint on an English-only model).
+ * Exported for tests.
+ */
+export function buildFluxConfigure(model: string, update: SttUpdate): Record<string, unknown> | null {
+  const msg: Record<string, unknown> = { type: 'Configure' };
+  if (update.languageHint && (model || DEFAULT_MODEL).endsWith('-multi')) {
+    msg.language_hints = [LANGUAGE_HINTS[update.languageHint]];
+  }
+  if (update.numerals != null) msg.numerals = update.numerals;
+  if (update.keyterms) msg.keyterms = update.keyterms.slice(0, MAX_KEYTERMS);
+  return Object.keys(msg).length > 1 ? msg : null;
+}
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -36,21 +74,17 @@ class FluxSttStream implements SttStream {
   private ws: WebSocket;
   private closed = false;
   private readonly replacements: ReturnType<typeof compileReplacements>;
+  private readonly model: string;
 
-  constructor(apiKey: string, config: SttConfig, private readonly handlers: SttEventHandlers) {
+  constructor(
+    apiKey: string,
+    config: SttConfig,
+    private readonly handlers: SttEventHandlers,
+    url: string,
+  ) {
     this.replacements = compileReplacements(config.replacements);
-
-    const model = config.model || DEFAULT_MODEL;
-    const params = new URLSearchParams({ model, encoding: 'mulaw', sample_rate: '8000' });
-    if (config.eotThreshold != null) params.set('eot_threshold', String(config.eotThreshold));
-    if (config.eagerEotThreshold != null) params.set('eager_eot_threshold', String(config.eagerEotThreshold));
-    for (const k of config.keyterms) params.append('keyterm', k);
-    // language_hint only applies to the multilingual model.
-    if (model.endsWith('-multi') && config.languageHint) {
-      params.set('language_hint', LANGUAGE_HINTS[config.languageHint]);
-    }
-
-    this.ws = new WebSocket(`${FLUX_URL}?${params.toString()}`, {
+    this.model = config.model || DEFAULT_MODEL;
+    this.ws = new WebSocket(`${url}?${fluxListenParams(config).toString()}`, {
       headers: { Authorization: `Token ${apiKey}` },
     });
     this.ws.on('message', (data: Buffer) => this.onMessage(data));
@@ -81,6 +115,12 @@ class FluxSttStream implements SttStream {
     this.ws.send(Buffer.from(payloadB64, 'base64'));
   }
 
+  configure(update: SttUpdate): void {
+    const msg = buildFluxConfigure(this.model, update);
+    if (!msg || this.closed || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify(msg));
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -99,6 +139,13 @@ class FluxSttStream implements SttStream {
     try {
       msg = JSON.parse(data.toString());
     } catch {
+      return;
+    }
+    if (msg.type === 'ConfigureFailure') {
+      // The update was rejected; Flux keeps the previous settings and the stream stays open.
+      this.handlers.onWarning?.(
+        `Deepgram Flux rejected a Configure update: ${String(msg.code ?? '')} ${String(msg.description ?? '')}`.trim(),
+      );
       return;
     }
     if (msg.type === 'Error') {
@@ -132,11 +179,15 @@ class FluxSttStream implements SttStream {
   }
 }
 
-/** Deepgram Flux over WebSocket, mulaw 8 kHz in, turn events out. */
-export function createDeepgramFluxFactory(apiKey: string): SttFactory {
+/**
+ * Deepgram Flux over WebSocket, mulaw 8 kHz in, turn events out. Streams
+ * support `configure` (language hint, numerals, keyterms) mid-call.
+ */
+export function createDeepgramFluxFactory(apiKey: string, opts: DeepgramFluxOptions = {}): SttFactory {
+  const url = opts.url ?? FLUX_URL;
   return {
     async create(config, handlers) {
-      const stream = new FluxSttStream(apiKey, config, handlers);
+      const stream = new FluxSttStream(apiKey, config, handlers, url);
       await stream.ready();
       return stream;
     },

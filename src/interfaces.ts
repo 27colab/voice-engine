@@ -39,6 +39,19 @@ export interface SttConfig {
   eotThreshold?: number;
   eagerEotThreshold?: number;
   languageHint?: Lang;
+  /** Write numbers as digits ("754 335 0210") instead of words. Provider default when unset. */
+  numerals?: boolean;
+}
+
+/**
+ * Settings a stream can change mid-call without reconnecting. Each field is
+ * optional; omitted fields keep their current value. `keyterms` replaces the
+ * whole list.
+ */
+export interface SttUpdate {
+  languageHint?: Lang;
+  numerals?: boolean;
+  keyterms?: string[];
 }
 
 /** Turn events, mirroring Deepgram Flux's turn model. */
@@ -52,12 +65,20 @@ export interface SttEventHandlers {
   onTurnResumed?(): void;
   /** Final end-of-turn transcript. */
   onEndOfTurn(transcript: string, meta: { confidence?: number }): void;
+  /** Fatal: the stream can no longer transcribe (the session ends the call). */
   onError?(err: Error): void;
+  /** Non-fatal: e.g. a rejected mid-call update; the stream keeps its previous settings. */
+  onWarning?(message: string): void;
 }
 
 export interface SttStream {
   sendAudio(payloadB64: string): void;
   close(): Promise<void>;
+  /**
+   * Optional: change settings mid-call. Providers without live updates omit it,
+   * and the session then keeps the settings it opened with.
+   */
+  configure?(update: SttUpdate): void;
 }
 
 export interface SttFactory {
@@ -179,6 +200,12 @@ export interface CallSessionApi {
   readonly info: CallSessionInfo;
   /** Open STT, speak the greeting, start the media loop. */
   start(): Promise<void>;
+  /**
+   * Change STT settings mid-call, e.g. `{ numerals: true }` while asking for a
+   * phone number. Returns false when the STT provider has no live updates.
+   * Applied once STT is open if called earlier.
+   */
+  configureStt(update: SttUpdate): boolean;
   /** Force-end. Idempotent. */
   end(reason: CallEndReason): Promise<void>;
 }

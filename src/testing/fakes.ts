@@ -9,6 +9,7 @@ import type {
   SttEventHandlers,
   SttFactory,
   SttStream,
+  SttUpdate,
   TtsEventHandlers,
   TtsFactory,
   TtsStream,
@@ -118,6 +119,8 @@ export class FakeTransport implements MediaTransport {
 
 export class FakeSttStream implements SttStream {
   readonly sentAudio: string[] = [];
+  /** Every mid-call update received, in order. */
+  readonly configures: SttUpdate[] = [];
   closed = false;
 
   constructor(
@@ -130,6 +133,9 @@ export class FakeSttStream implements SttStream {
   }
   async close(): Promise<void> {
     this.closed = true;
+  }
+  configure(update: SttUpdate): void {
+    this.configures.push(update);
   }
 
   emitStartOfTurn(): void {
@@ -149,6 +155,9 @@ export class FakeSttStream implements SttStream {
   }
   emitError(err: Error): void {
     this.handlers.onError?.(err);
+  }
+  emitWarning(message: string): void {
+    this.handlers.onWarning?.(message);
   }
 }
 
