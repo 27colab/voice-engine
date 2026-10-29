@@ -11,6 +11,8 @@ Uses Deepgram Flux's mid-stream `Configure` message (documented on developers.de
 - **Flux adapter:** `SttStream.configure`, `createDeepgramFluxFactory(key, { url })`, and exported `fluxListenParams` / `buildFluxConfigure`. A `ConfigureFailure` reply (Flux keeps its previous settings) is reported through the new `SttEventHandlers.onWarning` and the session's `onWarning` hook; it no longer risks being treated as a fatal error.
 - **Fakes:** `FakeSttStream.configure` records updates in `configures`; `emitWarning`.
 
+- **`createAnthropicChat(key, { timeoutMs, maxRetries })`** sets the Anthropic SDK's per-request timeout and retry count. The SDK defaults (10-minute timeout, 2 retries) mean a stalled turn holds a live call in silence until the caller hangs up; on the phone, 10–20 s and 0–1 retries fit better. Unset keeps the SDK defaults. A timed-out turn rejects `streamTurn`, which the session reports through `onError` and keeps listening. `anthropicClientOptions` is exported so hosts can check what the client gets.
+
 ### Changed (type-level)
 - `CallSessionApi` gains `configureStt`. `SttStream.configure` and `SttEventHandlers.onWarning` are optional, so custom STT providers keep compiling.
 

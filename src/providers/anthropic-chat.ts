@@ -15,6 +15,29 @@ export interface AnthropicChatOptions {
    * this is usually the larger saving. Default true.
    */
   cacheHistory?: boolean;
+  /**
+   * Per-request timeout in ms, passed to the Anthropic SDK (`timeout`). The SDK
+   * default is 10 minutes, which on a live phone call means dead air until the
+   * caller hangs up. For voice, 10–20 s is reasonable: a timed-out turn rejects
+   * `streamTurn`, which the call session reports through `onError` and then keeps
+   * listening. Default: the SDK default.
+   */
+  timeoutMs?: number;
+  /**
+   * Retries on connection errors, 408/409/429 and 5xx (SDK `maxRetries`, with
+   * its backoff). The SDK default is 2; on a call each retry adds dead air, so
+   * 0–1 is usually better. Default: the SDK default.
+   */
+  maxRetries?: number;
+}
+
+/** The Anthropic client options this adapter uses (exported for tests). */
+export function anthropicClientOptions(apiKey: string, opts: AnthropicChatOptions = {}): ConstructorParameters<typeof Anthropic>[0] {
+  return {
+    apiKey,
+    ...(opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {}),
+    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+  };
 }
 
 /** The API allows at most this many cache breakpoints per request. */
@@ -93,7 +116,7 @@ export function buildAnthropicRequest(
  * shorter prompts are simply not cached, which `usage.cacheReadTokens` shows.
  */
 export function createAnthropicChat(apiKey: string, opts: AnthropicChatOptions = {}): ChatEngine {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic(anthropicClientOptions(apiKey, opts));
 
   return {
     async streamTurn(req: ChatTurnRequest): Promise<ChatTurnResult> {
