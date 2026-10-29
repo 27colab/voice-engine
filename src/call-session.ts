@@ -7,6 +7,7 @@ import type {
   CallSessionHooks,
   CallSessionInfo,
   SttStream,
+  SttUpdate,
   ToolExecutor,
   TtsStream,
 } from './interfaces.js';
@@ -53,6 +54,14 @@ export interface CallSessionConfig {
     replacements?: Array<{ from: string; to: string }>;
     eotThreshold?: number;
     eagerEotThreshold?: number;
+    /** Digits instead of words for numbers. Change it mid-call with `session.configureStt`. */
+    numerals?: boolean;
+    /**
+     * Keep the STT language hint on the caller's current language when
+     * `languagePolicy` is 'follow-caller' (needs a provider with `configure`,
+     * e.g. Flux multilingual). Default true.
+     */
+    followLanguage?: boolean;
   };
   /** Hard cap on call length. Default 900. */
   maxCallSeconds?: number;
@@ -107,6 +116,8 @@ class CallSession implements CallSessionApi {
 
   private stt: SttStream | null = null;
   private bufferedAudio: string[] = [];
+  /** Updates requested before STT opened, merged; sent right after it opens. */
+  private pendingSttUpdate: SttUpdate | null = null;
 
   private utterance: Utterance | null = null;
   private utteranceSeq = 0;
@@ -226,6 +237,7 @@ class CallSession implements CallSessionApi {
         eotThreshold: s.eotThreshold,
         eagerEotThreshold: s.eagerEotThreshold,
         languageHint: this.lang,
+        numerals: s.numerals,
       },
       {
         onUpdate: (t) => this.onUpdate(t),
@@ -237,10 +249,28 @@ class CallSession implements CallSessionApi {
           this.hooks.onError?.(err);
           void this.end('error');
         },
+        onWarning: (message) => this.warn(message),
       },
     );
     for (const frame of this.bufferedAudio) this.stt.sendAudio(frame);
     this.bufferedAudio = [];
+    if (this.pendingSttUpdate) {
+      const update = this.pendingSttUpdate;
+      this.pendingSttUpdate = null;
+      this.configureStt(update);
+    }
+  }
+
+  configureStt(update: SttUpdate): boolean {
+    if (this.ended) return false;
+    if (!this.stt) {
+      this.pendingSttUpdate = { ...this.pendingSttUpdate, ...update };
+      return true;
+    }
+    if (!this.stt.configure) return false;
+    this.timeline.mark('stt_configure', { ...update });
+    this.stt.configure(update);
+    return true;
   }
 
   // -- turn events ---------------------------------------------------------------
@@ -385,7 +415,11 @@ class CallSession implements CallSessionApi {
     this.state = 'thinking';
 
     if (this.cfg.languagePolicy === 'follow-caller') {
+      const previous = this.lang;
       this.lang = detectLang(userText) ?? this.lang;
+      if (this.lang !== previous && this.cfg.stt.followLanguage !== false) {
+        this.configureStt({ languageHint: this.lang });
+      }
     }
 
     const historyLen = this.history.length;
